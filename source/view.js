@@ -44,6 +44,9 @@ view.View = class {
             this._element('sidebar-target-button').addEventListener('click', () => {
                 this.showTargetProperties();
             });
+            this._element('dataset-profiler-button').addEventListener('click', () => {
+                this.showDatasetProfiler();
+            });
             this._element('zoom-in-button').addEventListener('click', () => {
                 this.zoomIn();
             });
@@ -188,6 +191,12 @@ view.View = class {
                     accelerator: 'Shift+Backspace',
                     execute: () => this.resetZoom(),
                     enabled: () => this.activeTarget && this.target
+                });
+                view.add({
+                    label: 'Dataset &Profiler...',
+                    accelerator: 'CmdOrCtrl+Shift+P',
+                    execute: () => this.showDatasetProfiler(),
+                    enabled: () => this._model !== null
                 });
                 view.add({});
                 view.add({
@@ -805,6 +814,57 @@ view.View = class {
         } catch (error) {
             this.error(error, 'Error showing target properties.', null);
         }
+    }
+
+    showDatasetProfiler() {
+        if (!this._model) {
+            return;
+        }
+        try {
+            const sidebar = new view.DatasetProfilerSidebar(this, this.model);
+            sidebar.on('select-node', (sender, event) => {
+                const name = event && event.name ? event.name : null;
+                if (!name) {
+                    return;
+                }
+                if (this._target) {
+                    const node = this._locateNode(name);
+                    if (node) {
+                        this._target.scrollTo(this._target.activate(node));
+                    }
+                }
+            });
+            this._sidebar.open(sidebar, 'Dataset Profiler');
+        } catch (error) {
+            this.error(error, 'Error showing dataset profiler.', null);
+        }
+    }
+
+    _locateNode(name) {
+        const graph = this.activeTarget;
+        if (!graph || !Array.isArray(graph.nodes)) {
+            return null;
+        }
+        const target = this._normalizeNodeName(name);
+        if (!target) {
+            return null;
+        }
+        for (const node of graph.nodes) {
+            if (this._normalizeNodeName(node.name) === target) {
+                return node;
+            }
+            if (node.identifier && this._normalizeNodeName(node.identifier) === target) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    _normalizeNodeName(value) {
+        if (value === undefined || value === null) {
+            return '';
+        }
+        return value.toString().split('\n').shift().trim();
     }
 
     showNodeProperties(node) {
@@ -3786,6 +3846,8 @@ view.ModelSidebar = class extends view.ObjectSidebar {
     constructor(context, model) {
         super(context);
         this._model = model;
+        this._dataset = null;
+        this._limit = 25;
     }
 
     get identifier() {
@@ -3840,6 +3902,577 @@ view.ModelSidebar = class extends view.ObjectSidebar {
     get metrics() {
         const model = new metrics.Model(this._model);
         return this._view.model.attachment.metrics.model(model);
+    }
+};
+
+view.DatasetProfilerSidebar = class extends view.Control {
+
+    constructor(context, model) {
+        super(context);
+        this._model = model;
+        this._dataset = null;
+        this._pendingUpdate = null;
+        this._limit = 25;
+    }
+
+    get identifier() {
+        return 'dataset-profiler';
+    }
+
+    render() {
+        this.element = this.createElement('div', 'sidebar-object dataset-profiler');
+        this.element.setAttribute('id', 'dataset-profiler');
+        this._buildDatasetSection();
+        this._buildSubsetSection();
+        this._buildDisplaySection();
+        this._summary = this.createElement('div', 'dataset-profiler-summary');
+        this.element.appendChild(this._summary);
+        this._emptyMessage = this.createElement('div', 'dataset-profiler-empty');
+        this._emptyMessage.textContent = 'Load a dataset to see profiling information.';
+        this.element.appendChild(this._emptyMessage);
+        this._table = this.createElement('table', 'dataset-profiler-table');
+        const head = this.createElement('thead');
+        const headerRow = this.createElement('tr');
+        for (const label of ['Operation', 'Total (ms)', 'Mean (ms)', 'Samples', 'Share']) {
+            const cell = this.createElement('th');
+            cell.textContent = label;
+            headerRow.appendChild(cell);
+        }
+        head.appendChild(headerRow);
+        this._table.appendChild(head);
+        this._tableBody = this.createElement('tbody');
+        this._table.appendChild(this._tableBody);
+        this._table.style.display = 'none';
+        this.element.appendChild(this._table);
+        this._resetControls();
+        return [this.element];
+    }
+
+    _createSection(title) {
+        const section = this.createElement('div', 'dataset-profiler-section');
+        const heading = this.createElement('div', 'dataset-profiler-section-title');
+        heading.textContent = title;
+        section.appendChild(heading);
+        return section;
+    }
+
+    _buildDatasetSection() {
+        const section = this._createSection('Dataset');
+        this._fileInput = this.createElement('input', 'dataset-profiler-file-input');
+        this._fileInput.setAttribute('type', 'file');
+        this._fileInput.setAttribute('accept', '.json,.jsonl,.txt');
+        this._fileInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                this._readFile(files[0]);
+            }
+            e.target.value = '';
+        });
+        section.appendChild(this._fileInput);
+        this._uploadButton = this.createElement('button', 'dataset-profiler-upload');
+        this._uploadButton.setAttribute('type', 'button');
+        this._uploadButton.textContent = 'Load Dataset';
+        this._uploadButton.addEventListener('click', () => this._fileInput.click());
+        section.appendChild(this._uploadButton);
+        this._datasetMeta = this.createElement('div', 'dataset-profiler-meta');
+        this._datasetMeta.textContent = 'No dataset loaded.';
+        section.appendChild(this._datasetMeta);
+        this._error = this.createElement('div', 'dataset-profiler-error');
+        section.appendChild(this._error);
+        this.element.appendChild(section);
+    }
+
+    _buildSubsetSection() {
+        const section = this._createSection('Subset');
+        const sliderContainer = this.createElement('div', 'dataset-profiler-slider');
+        this._subsetSlider = this.createElement('input');
+        this._subsetSlider.setAttribute('type', 'range');
+        this._subsetSlider.setAttribute('min', '1');
+        this._subsetSlider.setAttribute('max', '100');
+        this._subsetSlider.setAttribute('value', '100');
+        this._subsetSlider.addEventListener('input', () => this._updateSubsetLabel());
+        this._subsetSlider.addEventListener('change', () => this._scheduleProfileUpdate());
+        sliderContainer.appendChild(this._subsetSlider);
+        section.appendChild(sliderContainer);
+        this._subsetLabel = this.createElement('div', 'dataset-profiler-slider-label');
+        section.appendChild(this._subsetLabel);
+        this.element.appendChild(section);
+    }
+
+    _buildDisplaySection() {
+        const section = this._createSection('Display');
+        const row = this.createElement('div', 'dataset-profiler-controls');
+        const label = this.createElement('span');
+        label.textContent = 'Top operations';
+        this._limitInput = this.createElement('input', 'dataset-profiler-limit');
+        this._limitInput.setAttribute('type', 'number');
+        this._limitInput.setAttribute('min', '1');
+        this._limitInput.setAttribute('max', '500');
+        this._limitInput.setAttribute('step', '1');
+        this._limitInput.setAttribute('aria-label', 'Top operations');
+        this._limitInput.value = this._limit.toString();
+        this._limitInput.addEventListener('change', () => this._updateLimit());
+        row.appendChild(label);
+        row.appendChild(this._limitInput);
+        section.appendChild(row);
+        this.element.appendChild(section);
+    }
+
+    _resetControls() {
+        this._dataset = null;
+        if (this._pendingUpdate) {
+            clearTimeout(this._pendingUpdate);
+            this._pendingUpdate = null;
+        }
+        this._clearError();
+        if (this._subsetSlider) {
+            this._subsetSlider.value = '100';
+            this._subsetSlider.disabled = true;
+        }
+        if (this._limitInput) {
+            this._limitInput.value = this._limit.toString();
+            this._limitInput.disabled = true;
+        }
+        if (this._subsetLabel) {
+            this._subsetLabel.textContent = 'Select a dataset to choose a subset.';
+        }
+        if (this._summary) {
+            this._summary.replaceChildren();
+        }
+        if (this._tableBody) {
+            this._tableBody.replaceChildren();
+        }
+        if (this._table) {
+            this._table.style.display = 'none';
+        }
+        if (this._emptyMessage) {
+            this._emptyMessage.style.display = 'block';
+            this._emptyMessage.textContent = 'Load a dataset to see profiling information.';
+        }
+    }
+
+    _clearError() {
+        if (this._error) {
+            this._error.textContent = '';
+            this._error.style.display = 'none';
+        }
+    }
+
+    _showError(error) {
+        if (!this._error) {
+            return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        this._error.textContent = message;
+        this._error.style.display = 'block';
+    }
+
+    _readFile(file) {
+        if (!file) {
+            return;
+        }
+        this._dataset = null;
+        this._resetControls();
+        this._datasetMeta.textContent = `Loading ${file.name}...`;
+        const reader = new FileReader();
+        reader.onload = () => {
+            this._datasetMeta.textContent = `Parsing ${file.name}...`;
+            setTimeout(() => {
+                try {
+                    const dataset = this._parseDataset(reader.result, file);
+                    this._setDataset(dataset);
+                } catch (error) {
+                    this._datasetMeta.textContent = 'No dataset loaded.';
+                    this._showError(error);
+                }
+            }, 0);
+        };
+        reader.onerror = () => {
+            this._datasetMeta.textContent = 'No dataset loaded.';
+            this._showError(reader.error || new Error('Unable to read dataset file.'));
+        };
+        reader.readAsText(file);
+    }
+
+    _parseDataset(content, file) {
+        const text = typeof content === 'string' ? content : '';
+        const trimmed = text.trim();
+        if (!trimmed) {
+            throw new Error('Dataset file is empty.');
+        }
+        let data;
+        try {
+            data = JSON.parse(trimmed);
+        } catch (error) {
+            throw new Error('Dataset file is not valid JSON.');
+        }
+        if (!Array.isArray(data) && (data === null || typeof data !== 'object')) {
+            throw new Error('Dataset JSON must be an array or an object.');
+        }
+        let profiles = [];
+        const name = data && typeof data === 'object' && data.name ? data.name : (file ? file.name : 'Dataset');
+        const unit = data && typeof data === 'object' && data.unit ? data.unit : 'ms';
+        if (Array.isArray(data)) {
+            profiles = [this._normalizeOperations(data, unit)];
+        } else if (data && typeof data === 'object') {
+            if (Array.isArray(data.operations)) {
+                profiles = [this._normalizeOperations(data.operations, data.unit || unit)];
+            } else if (Array.isArray(data.profiles)) {
+                profiles = data.profiles.map((profile) => {
+                    if (Array.isArray(profile)) {
+                        return this._normalizeOperations(profile, data.unit || unit);
+                    }
+                    if (profile && typeof profile === 'object') {
+                        return this._normalizeOperations(profile.operations || profile.values || [], profile.unit || data.unit || unit);
+                    }
+                    return [];
+                }).filter((profile) => profile.length > 0);
+            } else {
+                profiles = [this._normalizeOperations(data, unit)];
+            }
+        }
+        profiles = profiles.filter((profile) => Array.isArray(profile) && profile.length > 0);
+        if (profiles.length === 0) {
+            throw new Error('Dataset does not contain any valid profiling data.');
+        }
+        const operations = new Set();
+        for (const profile of profiles) {
+            for (const entry of profile) {
+                operations.add(entry.name);
+            }
+        }
+        return {
+            name,
+            fileName: file ? file.name : null,
+            unit: 'ms',
+            profiles,
+            operationCount: operations.size
+        };
+    }
+
+    _normalizeOperations(operations, unit) {
+        const result = [];
+        if (!operations) {
+            return result;
+        }
+        if (Array.isArray(operations)) {
+            for (const item of operations) {
+                if (item === null || item === undefined) {
+                    continue;
+                }
+                if (Array.isArray(item)) {
+                    const [name, raw] = item;
+                    const value = Number(raw);
+                    if (!name || !Number.isFinite(value)) {
+                        continue;
+                    }
+                    result.push({ name: this._normalizeOperationName(name), value: this._convertValue(value, unit) });
+                    continue;
+                }
+                if (typeof item === 'object') {
+                    const name = item.name || item.operation || item.op || item.id;
+                    const raw = item.time ?? item.duration ?? item.latency ?? item.value ?? item.total;
+                    if (!name || raw === undefined || raw === null) {
+                        continue;
+                    }
+                    const value = Number(raw);
+                    if (!Number.isFinite(value)) {
+                        continue;
+                    }
+                    const entryUnit = item.unit || item.units || unit;
+                    result.push({ name: this._normalizeOperationName(name), value: this._convertValue(value, entryUnit) });
+                }
+            }
+        } else if (typeof operations === 'object') {
+            for (const [name, raw] of Object.entries(operations)) {
+                const value = Number(raw);
+                if (!name || !Number.isFinite(value)) {
+                    continue;
+                }
+                result.push({ name: this._normalizeOperationName(name), value: this._convertValue(value, unit) });
+            }
+        }
+        return result.filter((entry) => entry && entry.name && Number.isFinite(entry.value));
+    }
+
+    _convertValue(value, unit) {
+        const normalized = unit ? unit.toString().trim().toLowerCase() : 'ms';
+        switch (normalized) {
+            case 's':
+            case 'sec':
+            case 'secs':
+            case 'second':
+            case 'seconds':
+                return value * 1000;
+            case 'us':
+            case 'µs':
+            case 'μs':
+            case 'microsecond':
+            case 'microseconds':
+                return value / 1000;
+            case 'ns':
+            case 'nanosecond':
+            case 'nanoseconds':
+                return value / 1000000;
+            default:
+                return value;
+        }
+    }
+
+    _normalizeOperationName(name) {
+        if (name === undefined || name === null) {
+            return '';
+        }
+        return name.toString().split('\n').shift().trim();
+    }
+
+    _setDataset(dataset) {
+        this._dataset = dataset;
+        this._clearError();
+        this._updateDatasetMeta(dataset);
+        if (this._limitInput) {
+            this._limit = Math.min(this._limit, Math.max(1, dataset.operationCount || 1));
+            this._limitInput.value = this._limit.toString();
+            this._limitInput.disabled = false;
+        }
+        if (this._subsetSlider) {
+            this._subsetSlider.disabled = dataset.profiles.length <= 1;
+        }
+        this._updateSubsetLabel();
+        this._scheduleProfileUpdate();
+    }
+
+    _updateDatasetMeta(dataset) {
+        if (!this._datasetMeta) {
+            return;
+        }
+        this._datasetMeta.replaceChildren();
+        const nameLine = this.createElement('div');
+        nameLine.textContent = dataset.name || 'Dataset';
+        nameLine.style.fontWeight = '600';
+        this._datasetMeta.appendChild(nameLine);
+        if (dataset.fileName && dataset.fileName !== dataset.name) {
+            const fileLine = this.createElement('div');
+            fileLine.textContent = dataset.fileName;
+            this._datasetMeta.appendChild(fileLine);
+        }
+        const detailLine = this.createElement('div');
+        detailLine.textContent = `${dataset.profiles.length} profile${dataset.profiles.length === 1 ? '' : 's'} • ${dataset.operationCount} operation${dataset.operationCount === 1 ? '' : 's'}`;
+        this._datasetMeta.appendChild(detailLine);
+    }
+
+    _updateSubsetLabel() {
+        if (!this._subsetLabel) {
+            return;
+        }
+        if (!this._dataset || this._dataset.profiles.length === 0) {
+            this._subsetLabel.textContent = 'Select a dataset to choose a subset.';
+            return;
+        }
+        if (this._subsetSlider.disabled || this._dataset.profiles.length === 1) {
+            this._subsetLabel.textContent = 'Using the single available profile.';
+            return;
+        }
+        const total = this._dataset.profiles.length;
+        const percent = Number.parseInt(this._subsetSlider.value, 10) || 100;
+        const count = Math.max(1, Math.round(total * percent / 100));
+        this._subsetLabel.textContent = `Using ${percent}% (${count}/${total}) of profiles.`;
+    }
+
+    _updateLimit() {
+        if (!this._limitInput) {
+            return;
+        }
+        let value = Number.parseInt(this._limitInput.value, 10);
+        if (!Number.isFinite(value)) {
+            value = this._limit;
+        }
+        value = Math.max(1, Math.min(500, value));
+        this._limit = value;
+        this._limitInput.value = value.toString();
+        this._scheduleProfileUpdate();
+    }
+
+    _selectProfiles(count) {
+        const profiles = this._dataset.profiles;
+        if (count >= profiles.length) {
+            return profiles.slice();
+        }
+        return profiles.slice(0, count);
+    }
+
+    _scheduleProfileUpdate(immediate = false) {
+        if (this._pendingUpdate) {
+            clearTimeout(this._pendingUpdate);
+            this._pendingUpdate = null;
+        }
+        const execute = () => {
+            this._pendingUpdate = null;
+            this._updateProfile();
+        };
+        if (immediate) {
+            execute();
+            return;
+        }
+        const shouldShowBusy = this._dataset && (this._dataset.operationCount || 0) > 250;
+        if (shouldShowBusy && this._emptyMessage) {
+            this._emptyMessage.style.display = 'block';
+            this._emptyMessage.textContent = 'Updating profiling data...';
+        }
+        if (shouldShowBusy && this._table) {
+            this._table.style.display = 'none';
+        }
+        this._pendingUpdate = setTimeout(execute, 0);
+    }
+
+    _updateProfile() {
+        this._updateSubsetLabel();
+        if (!this._dataset || this._dataset.profiles.length === 0) {
+            this._summary.replaceChildren();
+            this._tableBody.replaceChildren();
+            this._table.style.display = 'none';
+            this._emptyMessage.style.display = 'block';
+            this._emptyMessage.textContent = 'No profiling data available.';
+            return;
+        }
+        const totalProfiles = this._dataset.profiles.length;
+        const percent = this._subsetSlider.disabled ? 100 : Number.parseInt(this._subsetSlider.value, 10) || 100;
+        let count = Math.max(1, Math.round(totalProfiles * percent / 100));
+        count = Math.min(count, totalProfiles);
+        const profiles = this._selectProfiles(count);
+        const totals = new Map();
+        const counts = new Map();
+        for (const profile of profiles) {
+            for (const entry of profile) {
+                if (!entry || !Number.isFinite(entry.value)) {
+                    continue;
+                }
+                totals.set(entry.name, (totals.get(entry.name) || 0) + entry.value);
+                counts.set(entry.name, (counts.get(entry.name) || 0) + 1);
+            }
+        }
+        const entries = Array.from(totals.entries()).map(([name, total]) => {
+            const seen = counts.get(name) || 0;
+            return { name, total, count: seen, mean: seen > 0 ? total / seen : 0 };
+        }).sort((a, b) => b.total - a.total);
+        if (entries.length === 0) {
+            this._tableBody.replaceChildren();
+            this._table.style.display = 'none';
+            this._emptyMessage.style.display = 'block';
+            this._emptyMessage.textContent = 'No profiling data available for the selected subset.';
+            this._summary.replaceChildren();
+            return;
+        }
+        const limit = Math.min(this._limit, entries.length);
+        const limited = entries.slice(0, limit);
+        const totalTime = entries.reduce((sum, entry) => sum + entry.total, 0);
+        const maxTime = limited.reduce((max, entry) => Math.max(max, entry.total), 0);
+        this._renderRows(limited, totalTime, maxTime);
+        this._renderSummary({
+            totalProfiles,
+            usedProfiles: profiles.length,
+            percent,
+            totalOperations: entries.length,
+            shownOperations: limited.length,
+            totalTime
+        });
+    }
+
+    _renderRows(entries, totalTime, maxTime) {
+        this._tableBody.replaceChildren();
+        const darkMode = this._isDarkMode();
+        for (const entry of entries) {
+            const row = this.createElement('tr');
+            row.setAttribute('title', 'Highlight operation in graph');
+            row.addEventListener('click', () => this.emit('select-node', { name: entry.name }));
+            const nameCell = this.createElement('td', 'dataset-profiler-name');
+            nameCell.textContent = entry.name;
+            row.appendChild(nameCell);
+            const totalCell = this.createElement('td', 'dataset-profiler-cell-number');
+            totalCell.textContent = this._formatTime(entry.total);
+            row.appendChild(totalCell);
+            const meanCell = this.createElement('td', 'dataset-profiler-cell-number');
+            meanCell.textContent = this._formatTime(entry.mean);
+            row.appendChild(meanCell);
+            const countCell = this.createElement('td', 'dataset-profiler-cell-number');
+            countCell.textContent = this._formatCount(entry.count);
+            row.appendChild(countCell);
+            const percentCell = this.createElement('td', 'dataset-profiler-percent dataset-profiler-cell-number');
+            const share = totalTime > 0 ? (entry.total / totalTime) * 100 : 0;
+            const intensity = maxTime > 0 ? entry.total / maxTime : 0;
+            const bar = this.createElement('div', 'dataset-profiler-percent-bar');
+            bar.style.width = `${Math.max(4, Math.min(100, share))}%`;
+            bar.style.background = this._barGradient(intensity, darkMode);
+            percentCell.appendChild(bar);
+            const label = this.createElement('span', 'dataset-profiler-percent-label');
+            label.textContent = `${share.toFixed(1)}%`;
+            if (darkMode) {
+                label.style.color = intensity > 0.6 ? '#ffffff' : '#f4f4f4';
+                label.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.65)';
+            } else if (intensity > 0.6) {
+                label.style.color = '#ffffff';
+            }
+            percentCell.appendChild(label);
+            row.appendChild(percentCell);
+            this._tableBody.appendChild(row);
+        }
+        this._table.style.display = '';
+        this._emptyMessage.style.display = 'none';
+    }
+
+    _barGradient(intensity, darkMode = this._isDarkMode()) {
+        const clamped = Math.max(0, Math.min(1, intensity));
+        const start = [255, 255, 255];
+        const end = [255, 59, 48];
+        const color = start.map((value, index) => Math.round(value + (end[index] - value) * clamped));
+        const baseOpacity = darkMode ? 0.25 : 0.85;
+        return `linear-gradient(90deg, rgba(255,255,255,${baseOpacity}) 0%, rgb(${color[0]}, ${color[1]}, ${color[2]}) 100%)`;
+    }
+
+    _isDarkMode() {
+        if (this._host && this._host.window && typeof this._host.window.matchMedia === 'function') {
+            try {
+                return this._host.window.matchMedia('(prefers-color-scheme: dark)').matches;
+            } catch (error) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    _renderSummary(info) {
+        const { totalProfiles, usedProfiles, percent, totalOperations, shownOperations, totalTime } = info;
+        const lines = [];
+        lines.push(`Profiling ${usedProfiles} of ${totalProfiles} profile${totalProfiles === 1 ? '' : 's'} (${percent}%).`);
+        lines.push(`Displaying top ${shownOperations} of ${totalOperations} operations.`);
+        lines.push(`Total time: ${this._formatTime(totalTime)} ms.`);
+        this._summary.replaceChildren(...lines.map((text) => this._createLine(text)));
+    }
+
+    _formatTime(value) {
+        if (!Number.isFinite(value)) {
+            return '0';
+        }
+        const abs = Math.abs(value);
+        let digits = 3;
+        if (abs >= 1000) {
+            digits = 0;
+        } else if (abs >= 100) {
+            digits = 1;
+        } else if (abs >= 10) {
+            digits = 2;
+        }
+        return value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: digits });
+    }
+
+    _formatCount(value) {
+        return Number(value || 0).toLocaleString();
+    }
+
+    _createLine(text) {
+        const element = this.createElement('div');
+        element.textContent = text;
+        return element;
     }
 };
 
@@ -7015,6 +7648,7 @@ if (typeof window !== 'undefined' && window.exports) {
 export const View = view.View;
 export const ModelFactoryService = view.ModelFactoryService;
 export const ModelSidebar = view.ModelSidebar;
+export const DatasetProfilerSidebar = view.DatasetProfilerSidebar;
 export const NodeSidebar = view.NodeSidebar;
 export const TensorSidebar = view.TensorSidebar;
 export const Documentation = view.Documentation;

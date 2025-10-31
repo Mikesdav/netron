@@ -271,6 +271,37 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
 .sidebar-documentation dd { padding: 0 16px; margin-left: 0; margin-bottom: 16px; }
 .sidebar-documentation ul { margin-top: 6px; margin-bottom: 6px; padding-left: 20px; }
 .sidebar-documentation blockquote { margin-left: 15px; margin-right: 15px; }
+.dataset-profiler { display: flex; flex-direction: column; gap: 20px; }
+.dataset-profiler-section { display: flex; flex-direction: column; gap: 8px; }
+.dataset-profiler-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: #777; }
+.dataset-profiler-file-input { display: none; }
+.dataset-profiler-upload { align-self: flex-start; border-radius: 12px; border: 1px solid #d0d0d0; background: linear-gradient(180deg, #ffffff 0%, #f6f6f6 100%); color: #333333; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.1s ease, border-color 0.1s ease; }
+.dataset-profiler-upload:hover { border-color: #a0a0a0; background: #f0f0f0; }
+.dataset-profiler-upload:focus { outline: none; box-shadow: 0 0 0 2px rgba(46, 107, 210, 0.25); }
+.dataset-profiler-meta { font-size: 12px; color: #555555; line-height: 1.45; display: flex; flex-direction: column; gap: 4px; }
+.dataset-profiler-error { display: none; font-size: 12px; color: #b43029; background: rgba(180, 48, 41, 0.12); border-radius: 12px; padding: 8px 12px; }
+.dataset-profiler-slider { display: flex; flex-direction: column; gap: 6px; }
+.dataset-profiler-slider input[type="range"] { width: 100%; accent-color: #ff3b30; }
+.dataset-profiler-slider-label { font-size: 12px; color: #555555; }
+.dataset-profiler-mode-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dataset-profiler-mode { font-family: inherit; font-size: 12px; padding: 4px 8px; border-radius: 10px; border: 1px solid #d0d0d0; background: #ffffff; color: #333333; cursor: pointer; }
+.dataset-profiler-mode:focus { outline: none; border-color: #888888; }
+.dataset-profiler-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dataset-profiler-limit { width: 70px; font-family: inherit; font-size: 12px; padding: 4px 6px; border-radius: 10px; border: 1px solid #d0d0d0; background: #ffffff; color: #333333; }
+.dataset-profiler-limit:focus { outline: none; border-color: #888888; }
+.dataset-profiler-summary { font-size: 12px; color: #555555; line-height: 1.5; display: flex; flex-direction: column; gap: 4px; }
+.dataset-profiler-empty { font-size: 12px; color: #777777; padding: 16px 0; }
+.dataset-profiler-table { width: 100%; border-collapse: collapse; font-size: 12px; border-radius: 12px; overflow: hidden; }
+.dataset-profiler-table thead th { padding: 8px 10px; text-align: left; text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; font-weight: 600; color: #777777; background: rgba(0, 0, 0, 0.02); }
+.dataset-profiler-table tbody td { padding: 10px; border-bottom: 1px solid rgba(0, 0, 0, 0.04); vertical-align: middle; }
+.dataset-profiler-table tbody tr:last-child td { border-bottom: none; }
+.dataset-profiler-table tbody tr { transition: background-color 0.12s ease, transform 0.12s ease; cursor: pointer; }
+.dataset-profiler-table tbody tr:hover { background: rgba(46, 107, 210, 0.08); transform: translateX(2px); }
+.dataset-profiler-name { font-weight: 600; color: #333333; }
+.dataset-profiler-cell-number { text-align: right; font-variant-numeric: tabular-nums; color: #333333; }
+.dataset-profiler-percent { position: relative; text-align: right; font-variant-numeric: tabular-nums; }
+.dataset-profiler-percent-bar { position: absolute; top: 4px; bottom: 4px; left: 4px; border-radius: 999px; background: linear-gradient(90deg, #ffffff 0%, #ff3b30 100%); opacity: 0.9; pointer-events: none; }
+.dataset-profiler-percent-label { position: relative; z-index: 1; color: #333333; }
 @media (prefers-color-scheme: dark) {
     .sidebar html { color: #dfdfdf; }
     .sidebar { background-color: #2d2d2d; color: #dfdfdf; border-left: 1px solid rgba(0, 0, 0, 0); }
@@ -300,6 +331,23 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
     .sidebar-item-value-button { color: #888; }
     .sidebar-item-value-button svg use { fill: #888; stroke: #888; }
     .sidebar-item-value-button:hover svg use { fill: #e5e5e5; stroke: #e5e5e5; }
+    .dataset-profiler-section-title { color: #aaaaaa; }
+    .dataset-profiler-upload { border-color: #555555; background: linear-gradient(180deg, #3c3c3c 0%, #343434 100%); color: #dfdfdf; }
+    .dataset-profiler-upload:hover { border-color: #6c6c6c; background: #3c3c3c; }
+    .dataset-profiler-meta { color: #c6c6c6; }
+    .dataset-profiler-error { color: #ff8a80; background: rgba(180, 48, 41, 0.25); }
+    .dataset-profiler-slider-label { color: #c6c6c6; }
+    .dataset-profiler-mode { border-color: #555555; background: #2d2d2d; color: #dfdfdf; }
+    .dataset-profiler-limit { border-color: #555555; background: #2d2d2d; color: #dfdfdf; }
+    .dataset-profiler-summary { color: #c6c6c6; }
+    .dataset-profiler-empty { color: #aaaaaa; }
+    .dataset-profiler-table thead th { background: rgba(255, 255, 255, 0.04); color: #aaaaaa; }
+    .dataset-profiler-table tbody td { border-bottom: 1px solid rgba(255, 255, 255, 0.06); color: #dfdfdf; }
+    .dataset-profiler-name { color: #ffffff; }
+    .dataset-profiler-cell-number { color: #dfdfdf; }
+    .dataset-profiler-percent-label { color: #f1f1f1; text-shadow: 0 1px 1px rgba(0, 0, 0, 0.6); }
+    .dataset-profiler-table tbody tr:hover { background: rgba(46, 107, 210, 0.25); }
+    .dataset-profiler-percent-bar { background: linear-gradient(90deg, rgba(255, 255, 255, 0.2) 0%, #ff453a 100%); }
 }
 @media screen and (prefers-reduced-motion: reduce) {
 .menu { transition: none; }
@@ -386,6 +434,16 @@ button { font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI"
             <rect class="stroke" x="12" y="12" width="76" height="76" rx="16" ry="16" stroke-width="4"></rect>
             <circle class="stroke" cx="50" cy="50" r="18" stroke-width="4"></circle>
             <circle class="stroke fill" cx="50" cy="50" r="3" stroke-width="4"></circle>
+        </svg>
+    </button>
+    <button id="dataset-profiler-button" class="toolbar-button" title="Dataset Profiler">
+        <svg class="toolbar-icon" viewBox="0 0 100 100">
+            <rect class="border" x="24" y="32" width="12" height="40" rx="4" ry="4" stroke-width="8" fill="none"></rect>
+            <rect class="border" x="44" y="20" width="12" height="52" rx="4" ry="4" stroke-width="8" fill="none"></rect>
+            <rect class="border" x="64" y="40" width="12" height="32" rx="4" ry="4" stroke-width="8" fill="none"></rect>
+            <rect class="stroke" x="24" y="32" width="12" height="40" rx="4" ry="4" stroke-width="4" fill="none"></rect>
+            <rect class="stroke" x="44" y="20" width="12" height="52" rx="4" ry="4" stroke-width="4" fill="none"></rect>
+            <rect class="stroke" x="64" y="40" width="12" height="32" rx="4" ry="4" stroke-width="4" fill="none"></rect>
         </svg>
     </button>
     <div id="toolbar-navigator" class="toolbar-select">
