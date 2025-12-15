@@ -4100,17 +4100,23 @@ view.DatasetProfilerSidebar = class extends view.Control {
         if (!trimmed) {
             throw new Error('Dataset file is empty.');
         }
-        let data;
+        let data = null;
         try {
             data = JSON.parse(trimmed);
-        } catch (error) {
+        } catch {
             throw new Error('Dataset file is not valid JSON.');
         }
         if (!Array.isArray(data) && (data === null || typeof data !== 'object')) {
             throw new Error('Dataset JSON must be an array or an object.');
         }
         let profiles = [];
-        const name = data && typeof data === 'object' && data.name ? data.name : (file ? file.name : 'Dataset');
+        let name = 'Dataset';
+        if (file && file.name) {
+            name = file.name;
+        }
+        if (data && typeof data === 'object' && data.name) {
+            name = data.name;
+        }
         const unit = data && typeof data === 'object' && data.unit ? data.unit : 'ms';
         if (Array.isArray(data)) {
             profiles = [this._normalizeOperations(data, unit)];
@@ -4433,7 +4439,7 @@ view.DatasetProfilerSidebar = class extends view.Control {
         if (this._host && this._host.window && typeof this._host.window.matchMedia === 'function') {
             try {
                 return this._host.window.matchMedia('(prefers-color-scheme: dark)').matches;
-            } catch (error) {
+            } catch {
                 return false;
             }
         }
