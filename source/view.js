@@ -1,6 +1,7 @@
 
 import * as base from './base.js';
 import * as grapher from './grapher.js';
+import dataset from './dataset.js';
 
 const view = {};
 const markdown = {};
@@ -4104,7 +4105,11 @@ view.DatasetProfilerSidebar = class extends view.Control {
         try {
             data = JSON.parse(trimmed);
         } catch {
-            throw new Error('Dataset file is not valid JSON.');
+            const manifest = dataset.Reader.open(trimmed);
+            if (!manifest) {
+                throw new Error('Dataset file is not valid JSON or YAML.');
+            }
+            data = this._convertDatasetManifest(manifest, file);
         }
         if (!Array.isArray(data) && (data === null || typeof data !== 'object')) {
             throw new Error('Dataset JSON must be an array or an object.');
@@ -4154,6 +4159,29 @@ view.DatasetProfilerSidebar = class extends view.Control {
             profiles,
             operationCount: operations.size
         };
+    }
+
+    _convertDatasetManifest(manifest, file) {
+        const operations = [];
+        for (const name of manifest.names || []) {
+            if (name !== undefined && name !== null) {
+                operations.push({ name: String(name), value: 1 });
+            }
+        }
+        for (const split of manifest.splits || []) {
+            const label = split.path ? `${split.name}: ${split.path}` : String(split.name);
+            operations.push({ name: label, value: 1 });
+        }
+        for (const entry of manifest.metadata || []) {
+            if (typeof entry.value === 'number' && Number.isFinite(entry.value)) {
+                operations.push({ name: String(entry.name || 'metadata'), value: Number(entry.value) });
+            }
+        }
+        if (operations.length === 0) {
+            throw new Error('Dataset manifest does not contain classes or splits.');
+        }
+        const name = manifest.data && manifest.data.dataset ? manifest.data.dataset : (file && file.name ? file.name : 'Dataset');
+        return { name, unit: 'count', operations };
     }
 
     _normalizeOperations(operations, unit) {
