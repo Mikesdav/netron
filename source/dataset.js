@@ -264,3 +264,4 @@ dataset.Error = class extends Error {
 };
 
 export { dataset as default };
+export const ModelFactory = dataset.ModelFactory;
