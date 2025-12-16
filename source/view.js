@@ -4333,7 +4333,14 @@ view.DatasetProfilerSidebar = class extends view.Control {
             return;
         }
         if (!this._dataset || this._dataset.profiles.length === 0) {
-            this._subsetLabel.textContent = this._dataset && this._dataset.manifest ? 'Dataset manifest loaded; no profiling subset available.' : 'Select a dataset to choose a subset.';
+            if (this._dataset && this._dataset.manifest) {
+                const splits = Array.isArray(this._dataset.manifest.splits) ? this._dataset.manifest.splits : [];
+                const names = splits.map((split) => split && split.name).filter(Boolean);
+                const splitText = names.length ? `Available splits: ${names.join(', ')}.` : 'Use a dataset split as the profiling subset.';
+                this._subsetLabel.textContent = `${splitText} Load profiling data for a split to see operations.`;
+            } else {
+                this._subsetLabel.textContent = 'Select a dataset to choose a subset.';
+            }
             return;
         }
         if (this._subsetSlider.disabled || this._dataset.profiles.length === 1) {
@@ -4399,7 +4406,14 @@ view.DatasetProfilerSidebar = class extends view.Control {
             this._tableBody.replaceChildren();
             this._table.style.display = 'none';
             this._emptyMessage.style.display = 'block';
-            this._emptyMessage.textContent = this._dataset && this._dataset.manifest ? 'Dataset manifest loaded. No profiling data available.' : 'No profiling data available.';
+            if (this._dataset && this._dataset.manifest) {
+                const splits = Array.isArray(this._dataset.manifest.splits) ? this._dataset.manifest.splits : [];
+                const names = splits.map((split) => split && split.name).filter(Boolean);
+                const splitText = names.length ? `Load profiling data for a split (${names.join(', ')}) to see operations.` : 'Load profiling data for a dataset split to see operations.';
+                this._emptyMessage.textContent = `Dataset manifest loaded. ${splitText}`;
+            } else {
+                this._emptyMessage.textContent = 'No profiling data available.';
+            }
             return;
         }
         const totalProfiles = this._dataset.profiles.length;
