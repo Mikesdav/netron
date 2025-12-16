@@ -3961,7 +3961,7 @@ view.DatasetProfilerSidebar = class extends view.Control {
         const section = this._createSection('Dataset');
         this._fileInput = this.createElement('input', 'dataset-profiler-file-input');
         this._fileInput.setAttribute('type', 'file');
-        this._fileInput.setAttribute('accept', '.json,.jsonl,.txt');
+        this._fileInput.setAttribute('accept', '.json,.jsonl,.txt,.yaml,.yml,.data');
         this._fileInput.addEventListener('change', (e) => {
             const files = e.target.files;
             if (files && files.length > 0) {
@@ -4102,14 +4102,17 @@ view.DatasetProfilerSidebar = class extends view.Control {
             throw new Error('Dataset file is empty.');
         }
         let data = null;
+        let manifest = null;
         try {
             data = JSON.parse(trimmed);
         } catch {
-            const manifest = dataset.Reader.open(trimmed);
+            manifest = dataset.Reader.open(trimmed);
             if (!manifest) {
                 throw new Error('Dataset file is not valid JSON or YAML.');
             }
-            data = this._convertDatasetManifest(manifest, file);
+        }
+        if (manifest) {
+            return this._buildManifestDataset(manifest, file);
         }
         if (!Array.isArray(data) && (data === null || typeof data !== 'object')) {
             throw new Error('Dataset JSON must be an array or an object.');
@@ -4161,27 +4164,20 @@ view.DatasetProfilerSidebar = class extends view.Control {
         };
     }
 
-    _convertDatasetManifest(manifest, file) {
-        const operations = [];
-        for (const name of manifest.names || []) {
-            if (name !== undefined && name !== null) {
-                operations.push({ name: String(name), value: 1 });
-            }
-        }
-        for (const split of manifest.splits || []) {
-            const label = split.path ? `${split.name}: ${split.path}` : String(split.name);
-            operations.push({ name: label, value: 1 });
-        }
-        for (const entry of manifest.metadata || []) {
-            if (typeof entry.value === 'number' && Number.isFinite(entry.value)) {
-                operations.push({ name: String(entry.name || 'metadata'), value: Number(entry.value) });
-            }
-        }
-        if (operations.length === 0) {
-            throw new Error('Dataset manifest does not contain classes or splits.');
-        }
+    _buildManifestDataset(manifest, file) {
         const name = manifest.data && manifest.data.dataset ? manifest.data.dataset : (file && file.name ? file.name : 'Dataset');
-        return { name, unit: 'count', operations };
+        return {
+            name,
+            fileName: file ? file.name : null,
+            profiles: [],
+            operationCount: 0,
+            manifest: {
+                format: manifest.format || 'Dataset',
+                names: manifest.names || [],
+                splits: manifest.splits || [],
+                metadata: manifest.metadata || []
+            }
+        };
     }
 
     _normalizeOperations(operations, unit) {
@@ -4264,13 +4260,14 @@ view.DatasetProfilerSidebar = class extends view.Control {
         this._dataset = dataset;
         this._clearError();
         this._updateDatasetMeta(dataset);
+        const hasProfiles = Array.isArray(dataset.profiles) && dataset.profiles.length > 0;
         if (this._limitInput) {
             this._limit = Math.min(this._limit, Math.max(1, dataset.operationCount || 1));
             this._limitInput.value = this._limit.toString();
-            this._limitInput.disabled = false;
+            this._limitInput.disabled = !hasProfiles;
         }
         if (this._subsetSlider) {
-            this._subsetSlider.disabled = dataset.profiles.length <= 1;
+            this._subsetSlider.disabled = !hasProfiles || dataset.profiles.length <= 1;
         }
         this._updateSubsetLabel();
         this._scheduleProfileUpdate();
@@ -4290,9 +4287,45 @@ view.DatasetProfilerSidebar = class extends view.Control {
             fileLine.textContent = dataset.fileName;
             this._datasetMeta.appendChild(fileLine);
         }
-        const detailLine = this.createElement('div');
-        detailLine.textContent = `${dataset.profiles.length} profile${dataset.profiles.length === 1 ? '' : 's'} • ${dataset.operationCount} operation${dataset.operationCount === 1 ? '' : 's'}`;
-        this._datasetMeta.appendChild(detailLine);
+        if (dataset.manifest) {
+            const detailLine = this.createElement('div');
+            const parts = [];
+            if (dataset.manifest.format) {
+                parts.push(dataset.manifest.format);
+            }
+            if (dataset.manifest.names && dataset.manifest.names.length) {
+                parts.push(`${dataset.manifest.names.length} class${dataset.manifest.names.length === 1 ? '' : 'es'}`);
+            }
+            if (dataset.manifest.splits && dataset.manifest.splits.length) {
+                parts.push(`${dataset.manifest.splits.length} split${dataset.manifest.splits.length === 1 ? '' : 's'}`);
+            }
+            if (!parts.length) {
+                parts.push('Dataset manifest');
+            }
+            detailLine.textContent = parts.join(' • ');
+            this._datasetMeta.appendChild(detailLine);
+            if (dataset.manifest.names && dataset.manifest.names.length) {
+                const namesLine = this.createElement('div');
+                namesLine.textContent = `Classes: ${dataset.manifest.names.join(', ')}`;
+                this._datasetMeta.appendChild(namesLine);
+            }
+            if (dataset.manifest.splits && dataset.manifest.splits.length) {
+                const splitLine = this.createElement('div');
+                const splits = dataset.manifest.splits.map((split) => split.path ? `${split.name} (${split.path})` : split.name).filter(Boolean);
+                splitLine.textContent = `Splits: ${splits.join(', ')}`;
+                this._datasetMeta.appendChild(splitLine);
+            }
+            const extras = (dataset.manifest.metadata || []).filter((entry) => entry.name && entry.value !== undefined && entry.value !== null);
+            if (extras.length) {
+                const metaLine = this.createElement('div');
+                metaLine.textContent = extras.map((entry) => `${entry.name}: ${entry.value}`).join(' • ');
+                this._datasetMeta.appendChild(metaLine);
+            }
+        } else {
+            const detailLine = this.createElement('div');
+            detailLine.textContent = `${dataset.profiles.length} profile${dataset.profiles.length === 1 ? '' : 's'} • ${dataset.operationCount} operation${dataset.operationCount === 1 ? '' : 's'}`;
+            this._datasetMeta.appendChild(detailLine);
+        }
     }
 
     _updateSubsetLabel() {
@@ -4300,7 +4333,7 @@ view.DatasetProfilerSidebar = class extends view.Control {
             return;
         }
         if (!this._dataset || this._dataset.profiles.length === 0) {
-            this._subsetLabel.textContent = 'Select a dataset to choose a subset.';
+            this._subsetLabel.textContent = this._dataset && this._dataset.manifest ? 'Dataset manifest loaded; no profiling subset available.' : 'Select a dataset to choose a subset.';
             return;
         }
         if (this._subsetSlider.disabled || this._dataset.profiles.length === 1) {
@@ -4366,7 +4399,7 @@ view.DatasetProfilerSidebar = class extends view.Control {
             this._tableBody.replaceChildren();
             this._table.style.display = 'none';
             this._emptyMessage.style.display = 'block';
-            this._emptyMessage.textContent = 'No profiling data available.';
+            this._emptyMessage.textContent = this._dataset && this._dataset.manifest ? 'Dataset manifest loaded. No profiling data available.' : 'No profiling data available.';
             return;
         }
         const totalProfiles = this._dataset.profiles.length;
